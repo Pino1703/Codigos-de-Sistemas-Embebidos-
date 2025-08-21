@@ -1,0 +1,21 @@
+// CODIGO DE LA ACTIVIDA ANTERIRO EN CLASE
+const int ledPin = 5; 
+
+void setup() {
+  ledcSetup(0, 5000, 8);     
+  ledcAttachPin(ledPin, 0);   
+}
+
+void loop() {
+  // Aumentar brillo
+  for (int duty = 0; duty <= 255; duty++) {
+    ledcWrite(0, duty); 
+    delay(10);
+  }
+
+  // Disminuir brillo
+  for (int duty = 255; duty >= 0; duty--) {
+    ledcWrite(0, duty);
+    delay(10);
+  }
+}
