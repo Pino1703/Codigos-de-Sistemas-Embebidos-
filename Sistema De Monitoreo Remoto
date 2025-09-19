@@ -1,0 +1,77 @@
+#include "arduino_secrets.h"
+
+#include "thingProperties.h"
+
+#include "DHT.h"
+#include "DHT_U.h"
+
+#define DHTPIN 32
+#define DHTTYPE DHT11
+DHT dht(DHTPIN, DHTTYPE);
+
+// Pines para los actuadores (NO usar las variables del Cloud)
+const int pinVentilador = 4;
+const int pinCalefactor = 5;
+
+// Sensor de humedad del suelo (HW-080)
+const int humsuelo = 33;
+int valHumsuelo;
+
+void setup() {
+  // Initialize serial and wait for port to open:
+  Serial.begin(9600);
+  delay(1500); 
+
+  initProperties();
+  ArduinoCloud.begin(ArduinoIoTPreferredConnection);
+  setDebugMessageLevel(2);
+  ArduinoCloud.printDebugInfo();
+  
+  dht.begin();
+  
+  pinMode(DHTPIN, INPUT);
+  pinMode(humsuelo, INPUT);
+  pinMode(pinVentilador, OUTPUT);
+  pinMode(pinCalefactor, OUTPUT);
+}
+
+void loop() {
+  ArduinoCloud.printDebugInfo();
+  ArduinoCloud.update();
+  
+  temperatura = dht.readTemperature();
+  humedad = dht.readHumidity();
+
+  valHumsuelo = map(analogRead(humsuelo), 4092, 0, 0, 100);
+  humedadSuelo = valHumsuelo;
+
+  Serial.print("Temperatura: ");
+  Serial.print(temperatura);
+  Serial.println(" °C");
+
+  Serial.print("Humedad: ");
+  Serial.print(humedad);
+  Serial.println(" %");
+
+  Serial.print("Humedad del suelo: ");
+  Serial.print(valHumsuelo);
+  Serial.println(" %");
+
+  // Control de temperatura
+  if (temperatura >= 29.8) {
+    digitalWrite(pinCalefactor, HIGH);
+    digitalWrite(pinVentilador, LOW);
+    Serial.println("Ventilador encendido");
+  }
+  else if (temperatura <= 29.2) {
+    digitalWrite(pinVentilador, HIGH);
+    digitalWrite(pinCalefactor, LOW);
+    Serial.println("Calefactor encendido");
+  }
+  else {
+    digitalWrite(pinVentilador, HIGH);
+    digitalWrite(pinCalefactor, HIGH);
+    Serial.println("Ambos apagados");
+  }
+  delay(2000);
+}
