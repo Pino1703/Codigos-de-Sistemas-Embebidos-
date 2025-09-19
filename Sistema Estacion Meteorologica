@@ -1,0 +1,82 @@
+#include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <DHT.h>
+
+// ---------------- CONFIGURACIÓN ----------------
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+#define SCREEN_ADDRESS 0x3C
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+#define DHTPIN 4        // Pin donde está conectado el DHT11
+#define DHTTYPE DHT11   // Tipo de sensor
+DHT dht(DHTPIN, DHTTYPE);
+
+// ---------------- SETUP ----------------
+void setup() {
+  Serial.begin(115200);
+
+  // Inicializa OLED
+  if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("Error: no se encontró la OLED SSD1306"));
+    for (;;); // se queda trabado si falla
+  }
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.println(F("Estacion Meteo ESP32"));
+  display.display();
+
+  // Inicializa DHT11
+  dht.begin();
+  delay(2000);
+}
+
+// ---------------- LOOP ----------------
+void loop() {
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
+
+  // Verifica si la lectura es válida
+  if (isnan(h) || isnan(t)) {
+    Serial.println(F("Error leyendo DHT11"));
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.println(F("Error DHT11"));
+    display.display();
+    delay(2000);
+    return;
+  }
+
+  // Imprime en Serial
+  Serial.print(F("Temperatura: "));
+  Serial.print(t);
+  Serial.print(F(" °C | Humedad: "));
+  Serial.print(h);
+  Serial.println(F(" %"));
+
+  // Muestra en OLED
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.println(F("Estacion Meteo"));
+
+  display.setTextSize(2);
+  display.setCursor(0, 16);
+  display.print(t, 1);
+  display.println(F(" C"));
+
+  display.setTextSize(1);
+  display.setCursor(0, 40);
+  display.print(F("Hum: "));
+  display.print(h, 0);
+  display.println(F(" %"));
+
+  display.display();
+
+  delay(2000); // lectura cada 2 segundos
