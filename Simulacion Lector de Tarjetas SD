@@ -1,0 +1,67 @@
+#include <SPI.h>
+#include <SD.h>
+
+#define CS_PIN 4   
+
+void setup() {
+  Serial.begin(9600);
+  if (!SD.begin(CS_PIN)) {
+    Serial.println("Fallo al iniciar SD!");
+    while (1);
+  }
+  Serial.println("SD lista.");
+  Serial.println("Comandos:");
+  Serial.println("  W <archivo> <texto>  -> Sobrescribe archivo");
+  Serial.println("  R <archivo>          -> Lee archivo");
+}
+
+void loop() {
+  if (Serial.available()) {
+    String linea = Serial.readStringUntil('\n');
+    linea.trim();
+
+    if (linea.startsWith("W ")) {
+      int sp1 = linea.indexOf(' ', 2);
+      if (sp1 == -1) {
+        Serial.println("Uso: W <archivo> <texto>");
+        return;
+      }
+      String archivo = linea.substring(2, sp1);
+      String texto   = linea.substring(sp1 + 1);
+
+      // Sobrescribe archivo
+      if (SD.exists(archivo.c_str())) {
+        SD.remove(archivo.c_str());
+      }
+      File f = SD.open(archivo.c_str(), FILE_WRITE);
+      if (f) {
+        f.print(texto);
+        f.close();
+        Serial.println("Archivo escrito: " + archivo);
+      } else {
+        Serial.println("No se pudo abrir " + archivo);
+      }
+    }
+    else if (linea.startsWith("R ")) {
+      String archivo = linea.substring(2);
+      if (!SD.exists(archivo.c_str())) {
+        Serial.println("El archivo no existe.");
+        return;
+      }
+      File f = SD.open(archivo.c_str(), FILE_READ);
+      if (f) {
+        Serial.println("Contenido de " + archivo + ":");
+        while (f.available()) {
+          Serial.write(f.read());
+        }
+        Serial.println();
+        f.close();
+      } else {
+        Serial.println("No se pudo abrir " + archivo);
+      }
+    }
+    else {
+      Serial.println("Comando no valido. Usa W o R.");
+    }
+  }
+}
