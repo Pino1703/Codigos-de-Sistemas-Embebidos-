@@ -1,0 +1,184 @@
+#include <WiFi.h>
+#include <WebServer.h>
+
+// ---- Configuración WiFi AP ----
+const char* AP_SSID = "ESP32_LEDS";
+const char* AP_PASS = "12345678";   
+
+// ---- Pines de LEDs ----
+const int LED1 = 5;
+const int LED2 = 18;
+const int LED3 = 19;
+
+// ---- Servidor HTTP ----
+WebServer server(80);
+
+// ---- Estado de LEDs ----
+bool s1 = false, s2 = false, s3 = false;
+
+// HTML simple con botones y fetch()
+const char PAGE_INDEX[] PROGMEM = R"HTML(
+<!DOCTYPE html>
+<html lang="es">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ESP32 - Control de LEDs</title>
+<style>
+  body{font-family:system-ui,Arial;margin:24px}
+  h1{margin:0 0 12px}
+  .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
+  button{padding:12px;border:1px solid #ccc;border-radius:10px;font-size:16px}
+  .row{margin-top:16px;display:flex;gap:12px;flex-wrap:wrap}
+  .badge{display:inline-block;padding:6px 10px;border-radius:999px;border:1px solid #ddd}
+</style>
+<h1>ESP32 - Control de LEDs</h1>
+<div class="grid">
+  <div>
+    <h3>LED 1</h3>
+    <div class="row">
+      <button onclick="led(1,1)">Encender</button>
+      <button onclick="led(1,0)">Apagar</button>
+    </div>
+  </div>
+  <div>
+    <h3>LED 2</h3>
+    <div class="row">
+      <button onclick="led(2,1)">Encender</button>
+      <button onclick="led(2,0)">Apagar</button>
+    </div>
+  </div>
+  <div>
+    <h3>LED 3</h3>
+    <div class="row">
+      <button onclick="led(3,1)">Encender</button>
+      <button onclick="led(3,0)">Apagar</button>
+    </div>
+  </div>
+</div>
+
+<h3>Control Simultáneo</h3>
+<div class="row">
+  <button onclick="fetch('/allon').then(refresh)">Encender TODOS</button>
+  <button onclick="fetch('/alloff').then(refresh)">Apagar TODOS</button>
+</div>
+
+<h3>Estado</h3>
+<p id="estado" class="badge">Cargando...</p>
+
+<script>
+async function led(n, v){
+  await fetch(`/set?led=${n}&val=${v}`);
+  refresh();
+}
+async function refresh(){
+  const r = await fetch('/state');
+  const j = await r.json();
+  const text = `LED1:${j.LED1?'ON':'OFF'} | LED2:${j.LED2?'ON':'OFF'} | LED3:${j.LED3?'ON':'OFF'}`;
+  document.getElementById('estado').textContent = text;
+}
+refresh();
+</script>
+</html>
+)HTML";
+
+void addCORS() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+}
+
+void handleRoot() {
+  addCORS();
+  server.send(200, "text/html; charset=utf-8", PAGE_INDEX);
+}
+
+void handleSet() {
+  addCORS();
+  if (!server.hasArg("led") || !server.hasArg("val")) {
+    server.send(400, "text/plain", "Faltan parametros: led, val");
+    return;
+  }
+  int led = server.arg("led").toInt();
+  int val = server.arg("val").toInt(); // 0 u 1
+  bool ok = true;
+
+  switch (led) {
+    case 1: s1 = val; digitalWrite(LED1, s1 ? HIGH : LOW); break;
+    case 2: s2 = val; digitalWrite(LED2, s2 ? HIGH : LOW); break;
+    case 3: s3 = val; digitalWrite(LED3, s3 ? HIGH : LOW); break;
+    default: ok = false; break;
+  }
+  if (!ok) server.send(400, "text/plain", "LED invalido");
+  else     server.send(200, "text/plain", "OK");
+}
+
+void handleAllOn() {
+  addCORS();
+  s1 = s2 = s3 = true;
+  digitalWrite(LED1, HIGH);
+  digitalWrite(LED2, HIGH);
+  digitalWrite(LED3, HIGH);
+  server.send(200, "text/plain", "ALL ON");
+}
+
+void handleAllOff() {
+  addCORS();
+  s1 = s2 = s3 = false;
+  digitalWrite(LED1, LOW);
+  digitalWrite(LED2, LOW);
+  digitalWrite(LED3, LOW);
+  server.send(200, "text/plain", "ALL OFF");
+}
+
+void handleState() {
+  addCORS();
+  String json = "{";
+  json += "\"LED1\":"; json += (s1 ? "true" : "false"); json += ",";
+  json += "\"LED2\":"; json += (s2 ? "true" : "false"); json += ",";
+  json += "\"LED3\":"; json += (s3 ? "true" : "false");
+  json += "}";
+  server.send(200, "application/json", json);
+}
+
+void setup() {
+  pinMode(LED1, OUTPUT);
+  pinMode(LED2, OUTPUT);
+  pinMode(LED3, OUTPUT);
+  digitalWrite(LED1, LOW);
+  digitalWrite(LED2, LOW);
+  digitalWrite(LED3, LOW);
+
+  Serial.begin(115200);
+  Serial.println();
+  Serial.println("Iniciando AP...");
+
+  // Inicia Access Point
+  WiFi.mode(WIFI_AP);
+  bool ap = WiFi.softAP(AP_SSID, AP_PASS);
+  if (ap) {
+    Serial.print("AP iniciado: ");
+    Serial.println(AP_SSID);
+  } else {
+    Serial.println("Error iniciando AP");
+  }
+  Serial.print("IP AP: ");
+  Serial.println(WiFi.softAPIP()); // normalmente 192.168.4.1
+
+  // Rutas
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/set", HTTP_GET, handleSet);     // /set?led=1&val=1
+  server.on("/allon", HTTP_GET, handleAllOn);
+  server.on("/alloff", HTTP_GET, handleAllOff);
+  server.on("/state", HTTP_GET, handleState);
+
+  // CORS preflight
+  server.onNotFound([](){
+    addCORS();
+    server.send(404, "text/plain", "Not Found");
+  });
+
+  server.begin();
+  Serial.println("Servidor HTTP listo en puerto 80");
+}
+
+void loop() {
+  server.handleClient();
+}
