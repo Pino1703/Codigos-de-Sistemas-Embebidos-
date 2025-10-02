@@ -1,0 +1,171 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
+#include <NimBLEDevice.h>
+
+// ======= CONFIGURA AQUÍ =======
+const char* WIFI_SSID   = "Pino";
+const char* WIFI_PASS   = "12345678";
+const char* OWM_API_KEY = "593b70ddd2fc3fcc648a462b2ef836b3"; 
+String defaultCity = "Barranquilla,CO";
+// ==============================
+
+#define BLE_DEVICE_NAME  "ESP32-CLIMA"
+#define SVC_UUID         "12345678-1234-1234-1234-1234567890ab"
+#define CMD_UUID         "12345678-1234-1234-1234-1234567890ac"
+#define RSP_UUID         "12345678-1234-1234-1234-1234567890ad"
+
+NimBLEServer*         pServer            = nullptr;
+NimBLECharacteristic* pCmdCharacteristic = nullptr;
+NimBLECharacteristic* pRspCharacteristic = nullptr;
+
+bool deviceConnected = false;
+
+// --------- WiFi ----------
+void ensureWiFi() {
+  if (WiFi.status() == WL_CONNECTED) return;
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  Serial.print("Conectando WiFi");
+  unsigned long t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && (millis() - t0) < 15000) {
+    delay(500); Serial.print(".");
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("\n✅ WiFi conectado. IP: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\n❌ No se pudo conectar a WiFi.");
+  }
+}
+
+// --------- Clima ----------
+String fetchWeather(String cityQuery) {
+  ensureWiFi();
+  if (WiFi.status() != WL_CONNECTED) return "ERROR:WiFi";
+
+  String url = "http://api.openweathermap.org/data/2.5/weather?q=" +
+               cityQuery + "&units=metric&appid=" + String(OWM_API_KEY);
+
+  HTTPClient http;
+  http.begin(url);
+  int code = http.GET();
+  if (code <= 0) { http.end(); return "ERROR:HTTP"; }
+
+  String payload = http.getString();
+  http.end();
+
+  JsonDocument doc;
+  auto err = deserializeJson(doc, payload);
+  if (err) return "ERROR:JSON";
+
+  float temp = doc["main"]["temp"] | NAN;
+  int   hum  = doc["main"]["humidity"] | -1;
+  const char* desc = doc["weather"][0]["description"] | "n/a";
+  if (isnan(temp) || hum < 0) return "ERROR:DATA";
+
+  String out = cityQuery + " | T=" + String(temp, 1) + "°C, HR=" + String(hum) + "%, ";
+  out += String(desc);
+  return out;
+}
+
+// --------- Callbacks BLE ----------
+class MyServerCallbacks : public NimBLEServerCallbacks {
+  void onConnect(NimBLEServer* s, NimBLEConnInfo& info) override {
+    deviceConnected = true;
+    Serial.println("📱 Cliente BLE conectado!");
+  }
+  void onDisconnect(NimBLEServer* s, NimBLEConnInfo& info, int reason) override {
+    deviceConnected = false;
+    Serial.println("❌ Cliente BLE desconectado!");
+    NimBLEDevice::startAdvertising();
+  }
+};
+
+class MyCmdCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* ch, NimBLEConnInfo& info) override {
+    std::string rx = ch->getValue();
+    if (rx.empty()) return;
+
+    String cmd = String(rx.c_str());
+    cmd.trim();
+
+    Serial.print("➡️  Comando recibido: ");
+    Serial.println(cmd);
+
+    if (cmd.startsWith("GET_CLIMA")) {
+      String city = defaultCity;
+      int sep = cmd.indexOf(':');
+      if (sep > 0 && sep < (int)cmd.length() - 1) {
+        city = cmd.substring(sep + 1);
+        city.trim();
+      }
+
+      String resp = fetchWeather(city);
+      pRspCharacteristic->setValue(resp);
+      pRspCharacteristic->notify(true);
+
+      Serial.print("⬅️  Respuesta enviada: ");
+      Serial.println(resp);
+    } else {
+      String help = "CMDs: GET_CLIMA[:Ciudad,Pais]";
+      pRspCharacteristic->setValue(help);
+      pRspCharacteristic->notify(true);
+
+      Serial.println("ℹ️  Comando no reconocido, enviando ayuda.");
+    }
+  }
+};
+
+void setupBLE() {
+  NimBLEDevice::init(BLE_DEVICE_NAME);
+  NimBLEDevice::setPower(ESP_PWR_LVL_P7);
+
+  pServer = NimBLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  NimBLEService* pService = pServer->createService(SVC_UUID);
+
+  pCmdCharacteristic = pService->createCharacteristic(
+    CMD_UUID, NIMBLE_PROPERTY::WRITE
+  );
+  pCmdCharacteristic->setCallbacks(new MyCmdCallbacks());
+
+  pRspCharacteristic = pService->createCharacteristic(
+    RSP_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
+  );
+  pRspCharacteristic->setValue("ESP32-CLIMA listo");
+
+  // CCCD para notificaciones
+  pRspCharacteristic->createDescriptor("2902");
+
+  pService->start();
+
+  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+  adv->addServiceUUID(pService->getUUID());
+  adv->start();
+
+  Serial.println("✅ BLE inicializado. Anunciando como ESP32-CLIMA");
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(200);
+  Serial.println("🚀 Iniciando ESP32...");
+  setupBLE();
+  ensureWiFi();
+}
+
+void loop() {
+  static unsigned long t0 = millis();
+  if (millis() - t0 > 30000) {
+    t0 = millis();
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("⚠️  WiFi caído, intentando reconectar...");
+      ensureWiFi();
+    }
+  }
+  delay(10);
+}
